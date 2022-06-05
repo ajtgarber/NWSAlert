@@ -1,3 +1,5 @@
+# pip install pillow, dotenv, discord_webhook
+
 import json
 import requests
 import time
@@ -8,33 +10,36 @@ from PIL import Image
 from PIL import ImageDraw
 
 from dotenv import load_dotenv
+from discord_webhook import DiscordWebhook, DiscordEmbed
 
 load_dotenv()
 
 WEBHOOK_URL = os.environ['WEBHOOK_URL']
 GPS_COORDS = os.environ['GPS_COORDS']
-RADAR_SITE = 'ktlx'
+RADAR_SITE = 'kiln'
+
+webhook = DiscordWebhook(WEBHOOK_URL, rate_limit_retry=True)
 
 known_alerts = []
 
-def send_alert(timestamp, title, text):
+def send_alert(timestamp, title, text, image):
 	content = "**" + title + "**\n" + text
 	#data = {
 	#	"content" : content,
 	#	"username" : "WXAlert"
 	#}
-	data = {
-		"embeds": [{
-			"title" : title,
-			"description" : text,
-			"timestamp" : timestamp#,
-			#"image" : {
-			#	"url" : "https://radar.weather.gov/ridge/lite/KILN_loop.gif"
-			#}
-		}]
-	}
 	
-	result = requests.post(WEBHOOK_URL, json = data)
+	time.sleep(1)
+	embed = DiscordEmbed(title=title, description=text, timestamp=timestamp)
+	if image is not None:
+		byte_array = io.BytesIO()
+		image.save(byte_array, format='PNG')
+		
+		webhook.add_file(file=byte_array.getvalue(), filename="warn.png")
+		embed.set_image(url="attachment://warn.png")
+	
+	webhook.add_embed(embed)
+	response = webhook.execute()
 
 def request_alerts():
 	headers = {
@@ -44,10 +49,11 @@ def request_alerts():
 	response = None
 	
 	for counter in range(0, 5):
-		response = requests.get("https://api.weather.gov/alerts?point="+GPS_COORDS, headers=headers)
+		response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
 		
 		if response.status_code != 200:
 			print("Received an error from the server, assuming we've hit the rate-limit")
+			print(str(response.status_code))
 			time.sleep(10)
 		else:
 			break
@@ -72,8 +78,8 @@ def generate_warning_image(warning_polygon):
 		if point[1] < min_y: min_y = point[1]
 		if point[1] > max_y: max_y = point[1]
 	
-	old_range_x = max_x - min_x
-	old_range_y = max_y - min_y
+	old_range_x = abs(max_x - min_x)
+	old_range_y = abs(max_y - min_y)
 	new_range_x = 2000
 	new_range_y = 2000
 	transformed_polygon = []
@@ -81,7 +87,7 @@ def generate_warning_image(warning_polygon):
 		new_x = (((point[0] - min_x) * new_range_x) / old_range_x)
 		new_y = (((point[1] - min_y) * new_range_y) / old_range_y)
 		transformed_polygon.append(new_x)
-		transformed_polygon.append(new_y)
+		transformed_polygon.append(new_range_y - new_y)
 	
 	bbox = str(min_x)+","+str(min_y)+","+str(max_x)+","+str(max_y)
 	reflectivity_request = requests.get("https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bref_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox)
@@ -90,8 +96,20 @@ def generate_warning_image(warning_polygon):
 	ref2 = reflectivity.copy()
 	draw = ImageDraw.Draw(ref2)
 	draw.polygon(transformed_polygon, fill="red", outline="red")
+	
+	velocity_request = requests.get("https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bvel_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox)
+	velocity_bytes = io.BytesIO(velocity_request.content)
+	velocity = Image.open(velocity_bytes)
+	vel2 = velocity.copy()
+	draw = ImageDraw.Draw(vel2)
+	draw.polygon(transformed_polygon, fill="red", outline="red")
+	
 	ref3 = Image.blend(reflectivity, ref2, 0.5)
-	return ref3
+	vel3 = Image.blend(velocity, vel2, 0.5)
+	final = Image.new('RGB', (ref3.width, ref3.height+vel3.height))
+	final.paste(ref3, (0, 0))
+	final.paste(vel3, (0, ref3.height))
+	return final
 
 while True:	
 	warnings = request_alerts()
@@ -129,14 +147,17 @@ while True:
 			print("Source: " + source_line)
 			print("Impact: " + impact_line)
 			
-			warning_polygon = message["geometry"]["coordinates"][0]
-			warning_image = generate_warning_image(warning_polygon)
-			warning_image.show()
+			warning_polygon = None
+			warning_image = None
+			if "geometry" in message and message["geometry"] is not None:
+				warning_polygon = message["geometry"]["coordinates"][0]
+				warning_image = generate_warning_image(warning_polygon)
+				#warning_image.show()
 			
 			print("------")
 			print()
 			body = "" + initial_description + "\n\n" + hazard_line + "\n" + source_line + "\n" + impact_line
-			send_alert(message["properties"]["effective"], message["properties"]["headline"], body)
+			send_alert(message["properties"]["effective"], message["properties"]["headline"], body, warning_image)
 	else:
 		print("We were unable to successfully request information from the server")
 		break
