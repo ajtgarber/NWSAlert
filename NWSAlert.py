@@ -90,14 +90,26 @@ def generate_warning_image(warning_polygon):
 		transformed_polygon.append(new_range_y - new_y)
 	
 	bbox = str(min_x)+","+str(min_y)+","+str(max_x)+","+str(max_y)
-	reflectivity_request = requests.get("https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bref_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox)
+	reflectivity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bref_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
+	reflectivity_request = requests.get(reflectivity_url)
+	print("reflectivity response: " + str(reflectivity_request.status_code))
+	print("reflectivity url: " + reflectivity_url)
+	if reflectivity_request.status_code >= 500 and reflectivity_request.status_code < 600:
+		print("Received an internal server error")
+		return None
 	reflectivity_bytes = io.BytesIO(reflectivity_request.content)
 	reflectivity = Image.open(reflectivity_bytes)
 	ref2 = reflectivity.copy()
 	draw = ImageDraw.Draw(ref2)
 	draw.polygon(transformed_polygon, fill="red", outline="red")
 	
-	velocity_request = requests.get("https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bvel_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox)
+	velocity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bvel_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
+	velocity_request = requests.get(velocity_url)
+	print("velocity response: " + str(velocity_request.status_code))
+	print("velocity url: " + velocity_url)
+	if velocity_request.status_code >= 500 and velocity_request.status_code < 600:
+		print("Received an internal server error")
+		return None
 	velocity_bytes = io.BytesIO(velocity_request.content)
 	velocity = Image.open(velocity_bytes)
 	vel2 = velocity.copy()
