@@ -8,6 +8,7 @@ import os
 import io
 from PIL import Image
 from PIL import ImageDraw
+from PIL import UnidentifiedImageError
 
 from dotenv import load_dotenv
 from discord_webhook import DiscordWebhook, DiscordEmbed
@@ -80,8 +81,17 @@ def generate_warning_image(warning_polygon):
 	
 	old_range_x = abs(max_x - min_x)
 	old_range_y = abs(max_y - min_y)
-	new_range_x = 2000
-	new_range_y = 2000
+	
+	max_length = 2000
+	
+	if (old_range_x / old_range_y) < (old_range_y / old_range_x):
+		new_range_x = round(max_length * (old_range_x / old_range_y))
+		new_range_y = max_length
+	else:
+		new_range_x = max_length
+		new_range_y = round(max_length * (old_range_y / old_range_x))
+	#new_range_x = round(2000 * (old_range_x/old_range_y))
+	#new_range_y = round(2000 * (old_range_y/old_range_x))
 	transformed_polygon = []
 	for point in warning_polygon:
 		new_x = (((point[0] - min_x) * new_range_x) / old_range_x)
@@ -89,8 +99,8 @@ def generate_warning_image(warning_polygon):
 		transformed_polygon.append(new_x)
 		transformed_polygon.append(new_range_y - new_y)
 	
-	bbox = str(min_x)+","+str(min_y)+","+str(max_x)+","+str(max_y)
-	reflectivity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bref_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
+	bbox = str(round(min_x, 2))+","+str(round(min_y, 2))+","+str(round(max_x, 2))+","+str(round(max_y, 2))
+	reflectivity_url = f"https://opengeo.ncep.noaa.gov/geoserver/{RADAR_SITE}/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS={RADAR_SITE}_bref_raw&WIDTH={new_range_x}&HEIGHT={new_range_y}&BBOX={bbox}"
 	reflectivity_request = requests.get(reflectivity_url)
 	print("reflectivity response: " + str(reflectivity_request.status_code))
 	print("reflectivity url: " + reflectivity_url)
@@ -98,12 +108,16 @@ def generate_warning_image(warning_polygon):
 		print("Received an internal server error")
 		return None
 	reflectivity_bytes = io.BytesIO(reflectivity_request.content)
-	reflectivity = Image.open(reflectivity_bytes)
+	try:
+		reflectivity = Image.open(reflectivity_bytes)
+	except UnidentifiedImageError:
+		print("Unable to parse returned reflectivity image")
+		return None
 	ref2 = reflectivity.copy()
 	draw = ImageDraw.Draw(ref2)
 	draw.polygon(transformed_polygon, fill="red", outline="red")
 	
-	velocity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bvel_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
+	velocity_url = f"https://opengeo.ncep.noaa.gov/geoserver/{RADAR_SITE}/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS={RADAR_SITE}_bvel_raw&WIDTH={new_range_x}&HEIGHT={new_range_y}&BBOX={bbox}"
 	velocity_request = requests.get(velocity_url)
 	print("velocity response: " + str(velocity_request.status_code))
 	print("velocity url: " + velocity_url)
@@ -111,7 +125,11 @@ def generate_warning_image(warning_polygon):
 		print("Received an internal server error")
 		return None
 	velocity_bytes = io.BytesIO(velocity_request.content)
-	velocity = Image.open(velocity_bytes)
+	try:
+		velocity = Image.open(velocity_bytes)
+	except UnidentifiedImageError:
+		print("Unable to parse returned velocity image")
+		return None
 	vel2 = velocity.copy()
 	draw = ImageDraw.Draw(vel2)
 	draw.polygon(transformed_polygon, fill="red", outline="red")
@@ -125,6 +143,7 @@ def generate_warning_image(warning_polygon):
 
 while True:	
 	warnings = request_alerts()
+	warning_counter = 0
 	if warnings != None:
 		print("[" + str(datetime.datetime.now()) + "] NWS is reporting " + str(len(warnings)) + " alerts for your area")
 		for message in warnings:
@@ -164,7 +183,10 @@ while True:
 			if "geometry" in message and message["geometry"] is not None:
 				warning_polygon = message["geometry"]["coordinates"][0]
 				warning_image = generate_warning_image(warning_polygon)
-				#warning_image.show()
+				#if warning_image is not None:
+					#warning_image.show()
+					#warning_counter += 1
+					#warning_image.save(f"result{warning_counter}.png", format="png")
 			
 			print("------")
 			print()
