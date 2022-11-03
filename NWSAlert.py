@@ -49,8 +49,14 @@ def request_alerts():
 	response = None
 	
 	for counter in range(0, 5):
-		response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
-		
+		try:
+			response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
+			#response = requests.get("https://api.weather.gov/alerts?point="+GPS_COORDS, headers=headers)
+		except requests.exceptions.RequestException as e:
+			print("Caught RequestException from server")
+			print(e)
+			time.sleep(10)
+			continue
 		if response.status_code != 200:
 			print("Received an error from the server, assuming we've hit the rate-limit")
 			print(str(response.status_code))
@@ -62,7 +68,11 @@ def request_alerts():
 		print("We have retried 5 times, something's wrong")
 		return None
 
-	messages = json.loads(response.text)
+	try:
+		messages = json.loads(response.text)
+	except json.JSONDecodeError:
+		print("Unable to decode JSON response")
+		return None
 
 	warnings = messages["features"]
 	return warnings
@@ -91,27 +101,45 @@ def generate_warning_image(warning_polygon):
 	
 	bbox = str(min_x)+","+str(min_y)+","+str(max_x)+","+str(max_y)
 	reflectivity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bref_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
-	reflectivity_request = requests.get(reflectivity_url)
+	try:
+		reflectivity_request = requests.get(reflectivity_url)
+	except requests.exceptions.RequestException as e:
+		print("Received RequestException while trying to get reflectivity data")
+		print(e)
+		return None
 	print("reflectivity response: " + str(reflectivity_request.status_code))
 	print("reflectivity url: " + reflectivity_url)
-	if reflectivity_request.status_code >= 500 and reflectivity_request.status_code < 600:
+	if reflectivity_request.status_code != 200:
 		print("Received an internal server error")
 		return None
 	reflectivity_bytes = io.BytesIO(reflectivity_request.content)
-	reflectivity = Image.open(reflectivity_bytes)
+	try:
+		reflectivity = Image.open(reflectivity_bytes)
+	except PIL.UnidentifiedImageError:
+		print("Unable to parse reflectivity image data from NOAA")
+		return None
 	ref2 = reflectivity.copy()
 	draw = ImageDraw.Draw(ref2)
 	draw.polygon(transformed_polygon, fill="red", outline="red")
 	
 	velocity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bvel_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
-	velocity_request = requests.get(velocity_url)
+	try:
+		velocity_request = requests.get(velocity_url)
+	except requests.exceptions.RequestException as e:
+		print("Received RequestException while trying to get velocity data")
+		print(e)
+		return None
 	print("velocity response: " + str(velocity_request.status_code))
 	print("velocity url: " + velocity_url)
-	if velocity_request.status_code >= 500 and velocity_request.status_code < 600:
+	if velocity_request.status_code != 200:
 		print("Received an internal server error")
 		return None
 	velocity_bytes = io.BytesIO(velocity_request.content)
-	velocity = Image.open(velocity_bytes)
+	try:
+		velocity = Image.open(velocity_bytes)
+	except PIL.UnidentifiedImageError:
+		print("Unable to parse velocity image data from NOAA")
+		return None
 	vel2 = velocity.copy()
 	draw = ImageDraw.Draw(vel2)
 	draw.polygon(transformed_polygon, fill="red", outline="red")
@@ -153,7 +181,12 @@ while True:
 				hazard_line = description[description.index("HAZARD") : description.index("SOURCE")].strip()
 				source_line = description[description.index("SOURCE") : description.index("IMPACT")].strip()
 				impact_line = description[description.index("IMPACT") : description.index("Locations impacted")].replace("\n", " ").strip()
-			
+			elif "WHAT" in description: #doesn't totally align with variables, but will clean up later
+				initial_descrtiption = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
+				hazard_line = description[description.index("WHERE...") : description.index("WHEN...")].strip()
+				source_line = description[description.index("WHEN...") : description.index("IMPACTS...")].strip()
+				impact_line = description[description.index("IMPACTS...") : ].strip()
+
 			print("Initial: " + initial_description)
 			print("Hazard: " + hazard_line)
 			print("Source: " + source_line)
