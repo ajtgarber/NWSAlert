@@ -18,8 +18,6 @@ WEBHOOK_URL = os.environ['WEBHOOK_URL']
 GPS_COORDS = os.environ['GPS_COORDS']
 RADAR_SITE = 'kiln'
 
-webhook = DiscordWebhook(WEBHOOK_URL, rate_limit_retry=True)
-
 known_alerts = []
 
 def send_alert(timestamp, title, text, image):
@@ -30,6 +28,7 @@ def send_alert(timestamp, title, text, image):
 	#}
 	
 	time.sleep(1)
+	webhook = DiscordWebhook(WEBHOOK_URL, rate_limit_retry=True)
 	embed = DiscordEmbed(title=title, description=text, timestamp=timestamp)
 	if image is not None:
 		byte_array = io.BytesIO()
@@ -169,6 +168,7 @@ while True:
 			
 			known_alerts.append(message["properties"]["@id"])
 			
+			event = message["properties"]["event"]
 			description = message["properties"]["description"]
 			
 			initial_description = ""
@@ -182,10 +182,12 @@ while True:
 				source_line = description[description.index("SOURCE") : description.index("IMPACT")].strip()
 				impact_line = description[description.index("IMPACT") : description.index("Locations impacted")].replace("\n", " ").strip()
 			elif "WHAT" in description: #doesn't totally align with variables, but will clean up later
-				initial_descrtiption = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
+				initial_description = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
 				hazard_line = description[description.index("WHERE...") : description.index("WHEN...")].strip()
 				source_line = description[description.index("WHEN...") : description.index("IMPACTS...")].strip()
 				impact_line = description[description.index("IMPACTS...") : ].strip()
+			elif "Special Weather" in event:
+				initial_description = description
 
 			print("Initial: " + initial_description)
 			print("Hazard: " + hazard_line)
