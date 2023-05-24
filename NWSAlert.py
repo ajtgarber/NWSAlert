@@ -16,7 +16,7 @@ load_dotenv()
 
 WEBHOOK_URL = os.environ['WEBHOOK_URL']
 GPS_COORDS = os.environ['GPS_COORDS']
-RADAR_SITE = 'kiln'
+RADAR_SITE = 'klbb'
 
 known_alerts = []
 
@@ -59,7 +59,7 @@ def request_alerts():
 		if response.status_code != 200:
 			print("Received an error from the server, assuming we've hit the rate-limit")
 			print(str(response.status_code))
-			time.sleep(10)
+			time.sleep(90)
 		else:
 			break
 	
@@ -73,9 +73,31 @@ def request_alerts():
 		print("Unable to decode JSON response")
 		return None
 
+	if "features" not in messages:
+		print("We weren't able to find features within messages dict")
+		send_alert(datetime.datetime.now(), "Features not found", "Features not found within messages dict", None)
+		return None
 	warnings = messages["features"]
 	return warnings
 	
+def pull_image(image_url):
+        try:
+                image_request = requests.get(image_url)
+        except requests.exceptions.RequestException as e:
+                print("Received RequestException while trying to get image data")
+                print(e)
+                return None
+        if image_request.status_code != 200:
+                print("Received an internal server error")
+                return None
+        image_bytes = io.BytesIO(image_request.content)
+        try:
+                image = Image.open(image_bytes)
+        except PIL.UnidentifiedImageError:
+                print("Unable to parse image data from NOAA")
+                return None
+       	return image
+
 def generate_warning_image(warning_polygon):
 	min_x =  9999
 	min_y =  9999
@@ -100,54 +122,19 @@ def generate_warning_image(warning_polygon):
 	
 	bbox = str(min_x)+","+str(min_y)+","+str(max_x)+","+str(max_y)
 	reflectivity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bref_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
-	try:
-		reflectivity_request = requests.get(reflectivity_url)
-	except requests.exceptions.RequestException as e:
-		print("Received RequestException while trying to get reflectivity data")
-		print(e)
-		return None
-	print("reflectivity response: " + str(reflectivity_request.status_code))
-	print("reflectivity url: " + reflectivity_url)
-	if reflectivity_request.status_code != 200:
-		print("Received an internal server error")
-		return None
-	reflectivity_bytes = io.BytesIO(reflectivity_request.content)
-	try:
-		reflectivity = Image.open(reflectivity_bytes)
-	except PIL.UnidentifiedImageError:
-		print("Unable to parse reflectivity image data from NOAA")
-		return None
-	ref2 = reflectivity.copy()
-	draw = ImageDraw.Draw(ref2)
-	draw.polygon(transformed_polygon, fill="red", outline="red")
+	reflectivity = pull_image(reflectivity_url)
+	draw = ImageDraw.Draw(reflectivity, 'RGBA')
+	draw.polygon(transformed_polygon, fill=(255, 0, 0, 125), outline=(255, 0, 0, 125))
 	
 	velocity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bvel_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
-	try:
-		velocity_request = requests.get(velocity_url)
-	except requests.exceptions.RequestException as e:
-		print("Received RequestException while trying to get velocity data")
-		print(e)
-		return None
-	print("velocity response: " + str(velocity_request.status_code))
-	print("velocity url: " + velocity_url)
-	if velocity_request.status_code != 200:
-		print("Received an internal server error")
-		return None
-	velocity_bytes = io.BytesIO(velocity_request.content)
-	try:
-		velocity = Image.open(velocity_bytes)
-	except PIL.UnidentifiedImageError:
-		print("Unable to parse velocity image data from NOAA")
-		return None
-	vel2 = velocity.copy()
-	draw = ImageDraw.Draw(vel2)
-	draw.polygon(transformed_polygon, fill="red", outline="red")
+	velocity = pull_image(velocity_url)
+	draw = ImageDraw.Draw(velocity, 'RGBA')
+	draw.polygon(transformed_polygon, fill=(255, 0, 0, 125), outline="red")
 	
-	ref3 = Image.blend(reflectivity, ref2, 0.5)
-	vel3 = Image.blend(velocity, vel2, 0.5)
-	final = Image.new('RGB', (ref3.width, ref3.height+vel3.height))
-	final.paste(ref3, (0, 0))
-	final.paste(vel3, (0, ref3.height))
+	final = Image.new('RGB', (reflectivity.width, reflectivity.height+velocity.height))
+	final.paste(reflectivity, (0,0))
+	final.paste(velocity, (0, reflectivity.height))
+
 	return final
 
 while True:	
@@ -208,4 +195,4 @@ while True:
 	else:
 		print("We were unable to successfully request information from the server")
 		break
-	time.sleep(45)
+	time.sleep(300)
