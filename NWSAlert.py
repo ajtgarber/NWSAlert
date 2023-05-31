@@ -16,11 +16,25 @@ load_dotenv()
 
 WEBHOOK_URL = os.environ['WEBHOOK_URL']
 GPS_COORDS = os.environ['GPS_COORDS']
-RADAR_SITE = 'klbb'
+RADAR_SITE = 'koun'
 
 known_alerts = []
 
-def send_alert(timestamp, title, text, image):
+headers = {
+	'User-Agent': '(Test Weather Alerting, ajtgarber@gmail.com)'
+}
+
+try:
+	response = requests.get("https://api.weather.gov/points/%s"%(GPS_COORDS), headers=headers)
+	if response.status_code != 200:
+		print("Received server error attempting to determine radar site, using default value")
+	response = json.loads(response.text)
+	RADAR_SITE = response["properties"]["radarStation"]
+	print("Detected radar site: %s" %  (RADAR_SITE))
+except requests.exceptions.RequestException as e:
+	print("Unable to determine radar site of specified coordinates, using default value")
+
+def send_alert(timestamp, title, text, image, id):
 	content = "**" + title + "**\n" + text
 	#data = {
 	#	"content" : content,
@@ -30,6 +44,7 @@ def send_alert(timestamp, title, text, image):
 	time.sleep(1)
 	webhook = DiscordWebhook(WEBHOOK_URL, rate_limit_retry=True)
 	embed = DiscordEmbed(title=title, description=text, timestamp=timestamp)
+	embed.set_footer(text=id)
 	if image is not None:
 		byte_array = io.BytesIO()
 		image.save(byte_array, format='PNG')
@@ -41,9 +56,6 @@ def send_alert(timestamp, title, text, image):
 	response = webhook.execute()
 
 def request_alerts():
-	headers = {
-		'User-Agent': '(Test Weather Alerting, ajtgarber@gmail.com)'
-	}
 	time.sleep(1)
 	response = None
 	
@@ -157,7 +169,8 @@ while True:
 			
 			event = message["properties"]["event"]
 			description = message["properties"]["description"]
-			
+			id = message["properties"]["@id"]
+
 			initial_description = ""
 			hazard_line = ""
 			source_line = ""
@@ -191,7 +204,7 @@ while True:
 			print("------")
 			print()
 			body = "" + initial_description + "\n\n" + hazard_line + "\n" + source_line + "\n" + impact_line
-			send_alert(message["properties"]["effective"], message["properties"]["headline"], body, warning_image)
+			send_alert(message["properties"]["effective"], message["properties"]["headline"], body, warning_image, id)
 	else:
 		print("We were unable to successfully request information from the server")
 		break
