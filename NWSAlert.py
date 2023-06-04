@@ -135,11 +135,15 @@ def generate_warning_image(warning_polygon):
 	bbox = str(min_x)+","+str(min_y)+","+str(max_x)+","+str(max_y)
 	reflectivity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bref_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
 	reflectivity = pull_image(reflectivity_url)
+	if reflectivity is None:
+		return None
 	draw = ImageDraw.Draw(reflectivity, 'RGBA')
 	draw.polygon(transformed_polygon, fill=(255, 0, 0, 125), outline=(255, 0, 0, 125))
 	
 	velocity_url = "https://opengeo.ncep.noaa.gov/geoserver/"+RADAR_SITE+"/ows?service=wms&version=1.3.0&request=GetMap&format=image/jpeg&LAYERS="+RADAR_SITE+"_bvel_raw&WIDTH=2000&HEIGHT=2000&BBOX="+bbox
 	velocity = pull_image(velocity_url)
+	if velocity is None:
+		return None
 	draw = ImageDraw.Draw(velocity, 'RGBA')
 	draw.polygon(transformed_polygon, fill=(255, 0, 0, 125), outline="red")
 	
@@ -186,7 +190,7 @@ while True:
 				hazard_line = description[description.index("WHERE...") : description.index("WHEN...")].strip()
 				source_line = description[description.index("WHEN...") : description.index("IMPACTS...")].strip()
 				impact_line = description[description.index("IMPACTS...") : ].strip()
-			elif "Special Weather" in event:
+			elif "Special Weather" in event or "Alert" in event:
 				initial_description = description
 
 			print("Initial: " + initial_description)
