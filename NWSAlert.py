@@ -45,7 +45,7 @@ def determine_spc_url():
     #Day 1 Convective Outlook - 0600Z, 1300Z, 1630Z, 2000Z, and 0100Z
     if utcnow.hour > 20:
         timestamp = utcnow.strftime("%Y%m%d_2000")
-    elif utcnow.hour >= 16 and utcnow.minute >= 30:
+    elif utcnow.hour > 16 or (utcnow.hour == 16 and utcnow.minute >= 30):
         timestamp = utcnow.strftime("%Y%m%d_1630")
     elif utcnow.hour >= 13:
         timestamp = utcnow.strftime("%Y%m%d_1300")
@@ -66,7 +66,7 @@ def determine_spc_title():
     if utcnow.hour > 20:
         outlook_time = "2000"
         timestamp = utcnow.strftime("%Y%m%d_2000")
-    elif utcnow.hour >= 16 and utcnow.minute >= 30:
+    elif utcnow.hour > 16 or (utcnow.hour == 16 and utcnow.minute >= 30):
         outlook_time = "1630"
         timestamp = utcnow.strftime("%Y%m%d_1630")
     elif utcnow.hour >= 13:
@@ -223,7 +223,7 @@ while True:
 				severe_risk = True
 				risk_type = labels[index]
 		if severe_risk:
-			print("You are subject to a "+risk_type+" severe risk today.")
+			print("[" + str(datetime.now()) + "] You are subject to a "+risk_type+" severe risk today.")
 			outlook_image = Image.open(requests.get("https://www.spc.noaa.gov/products/outlook/day1otlk.gif", stream=True).raw)
 			send_alert(datetime.now().strftime("%Y-%m-%dT%H:%M:%S.00Z"), "Your area is subject to a " + risk_type + " severe risk today", determine_spc_title(), outlook_image, "https://www.spc.noaa.gov/products/outlook/day1otlk.gif")
 
