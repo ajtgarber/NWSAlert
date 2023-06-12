@@ -3,7 +3,7 @@
 import json
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import io
 import geopandas
@@ -43,7 +43,7 @@ def determine_spc_url():
     timestamp = ""
     #Convective Outlook Issuance Times
     #Day 1 Convective Outlook - 0600Z, 1300Z, 1630Z, 2000Z, and 0100Z
-    if utcnow.hour > 20:
+    if utcnow.hour >= 20:
         timestamp = utcnow.strftime("%Y%m%d_2000")
     elif utcnow.hour > 16 or (utcnow.hour == 16 and utcnow.minute >= 30):
         timestamp = utcnow.strftime("%Y%m%d_1630")
@@ -53,6 +53,9 @@ def determine_spc_url():
         timestamp = utcnow.strftime("%Y%m%d_0600")
     elif utcnow.hour >= 1:
         timestamp = utcnow.strftime("%Y%m%d_0100")
+    elif utcnow.hour == 0:
+        utcnow = utcnow - timedelta(days=1)
+        timestamp = utcnow.strftime("%Y%m%d_2000")
     spc_url = f"https://www.spc.noaa.gov/products/outlook/archive/{year}/day1otlk_{timestamp}_cat.lyr.geojson"
     return spc_url
 
@@ -63,7 +66,7 @@ def determine_spc_title():
     #Convective Outlook Issuance Times
     #Day 1 Convective Outlook - 0600Z, 1300Z, 1630Z, 2000Z, and 0100Z
     outlook_time = ""
-    if utcnow.hour > 20:
+    if utcnow.hour >= 20:
         outlook_time = "2000"
         timestamp = utcnow.strftime("%Y%m%d_2000")
     elif utcnow.hour > 16 or (utcnow.hour == 16 and utcnow.minute >= 30):
@@ -78,6 +81,9 @@ def determine_spc_title():
     elif utcnow.hour >= 1:
         outlook_time = "0100"
         timestamp = utcnow.strftime("%Y%m%d_0100")
+    elif utcnow.hour == 0:
+        utcnow = utcnow - timedelta(hours=2)
+        outlook_time = "2000"
 
     out_str = utcnow.strftime("%b %d, %Y")+" "+outlook_time+" UTC Day 1 Convective Outlook"
     return out_str
@@ -207,6 +213,7 @@ while True:
 	spc_url = determine_spc_url()
 	if spc_url != last_spc_url:
 		last_spc_url = spc_url
+		print(spc_url)
 		day1_outlook = geopandas.read_file(spc_url)
 		geom = day1_outlook['geometry']
 		labels = day1_outlook['LABEL']
