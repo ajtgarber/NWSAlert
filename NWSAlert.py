@@ -1,4 +1,4 @@
-# pip install pillow, dotenv, discord_webhook, geopandas
+# pip install pillow, python-dotenv, discord_webhook, geopandas
 
 import json
 import requests
@@ -92,7 +92,7 @@ def request_alerts():
 	for counter in range(0, 5):
 		try:
 			#response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
-			#response = requests.get("https://api.weather.gov/alerts?point="+GPS_COORDS, headers=headers)
+			response = requests.get("https://api.weather.gov/alerts?point="+GPS_COORDS, headers=headers)
 		except requests.exceptions.RequestException as e:
 			print("Caught RequestException from server")
 			print(e)
@@ -182,6 +182,69 @@ def generate_warning_image(warning_polygon):
 	final.paste(velocity, (0, reflectivity.height))
 
 	return final
+	
+def examine_spc_risk(spc_url, spc_title):
+	day1_outlook = None
+	try:
+		day1_outlook = geopandas.read_file(spc_url)
+	except urllib.error.HTTPError as e:
+		print("Received error while trying to retreieve outlook, we may have gotten here too early")
+		last_spc_url = ""
+
+	if day1_outlook is not None:
+		geom  = day1_outlook['geometry']
+		labels = day1_outlook['LABEL']
+
+		home_str = GPS_COORDS.split(",")
+		lat      = home_str[0]
+		long     = home_str[1]
+		home     = Point(long, lat)
+
+		alert_time  = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.00Z")
+		risk        = home.within(geom)
+		severe_risk = False
+		risk_types = {
+			"TSTM" : "Thunderstorm",
+			"MRGL" : "Marginal",
+			"SLGT" : "Slight",
+			"ENH"  : "Enhanced",
+			"MDT"  : "Moderate",
+			"HIGH" : "High",
+			"None" : "None"
+		}
+		risk_type = "None"
+		for index, row in risk.items():
+			if row == True:
+				severe_risk = True
+				risk_type = labels[index]
+		risk_type = risk_types[risk_type]
+		if severe_risk:
+			print("[" + str(datetime.now()) + "] You are subject to a "+risk_type+" severe risk today.")
+			outlook_image = Image.open(requests.get("https://www.spc.noaa.gov/products/outlook/day1otlk.gif", stream=True).raw)
+			send_alert(alert_time, "Your area is subject to a " + risk_type + " severe risk today", spc_title, outlook_image, "https://www.spc.noaa.gov/products/outlook/day1otlk.gif")
+			
+def parse_alert(message):
+	initial_description = ""
+	hazard_line = ""
+	source_line = ""
+	impact_line = ""
+	
+	initial_description = message["properties"]["headline"]
+	description = message["properties"]["description"]
+			
+	if "HAZARD" in description:
+		#initial_description = description[ : description.index("HAZARD")].replace("\n", " ").strip()
+		hazard_line = description[description.index("HAZARD") : description.index("SOURCE")].strip()
+		source_line = description[description.index("SOURCE") : description.index("IMPACT")].strip()
+		impact_line = description[description.index("IMPACT") : description.index("Locations impacted")].replace("\n", " ").strip()
+	elif "WHAT" in description:
+		#initial_description = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
+		hazard_line = description[description.index("WHERE...") : description.index("WHEN...")].strip()
+		source_line = description[description.index("WHEN...") : description.index("IMPACTS...")].strip()
+		impact_line = description[description.index("IMPACTS...") : ].strip()
+	elif "Special Weather" in event or "Alert" in event:
+		initial_description = description
+	return (initial_description, hazard_line, source_line, impact_line)
 
 last_spc_url = ""
 while True:	
@@ -189,100 +252,46 @@ while True:
 	if spc_url != last_spc_url:
 		last_spc_url = spc_url
 		print(spc_url)
-		day1_outlook = None
-		try:
-			day1_outlook = geopandas.read_file(spc_url)
-		except urllib.error.HTTPError as e:
-			print("Received error while trying to retreieve outlook, we may have gotten here too early")
-			last_spc_url = ""
-
-		if day1_outlook is not None:
-			geom = day1_outlook['geometry']
-			labels = day1_outlook['LABEL']
-
-			home_str = GPS_COORDS.split(",")
-			lat = home_str[0]
-			long = home_str[1]
-			home = Point(long, lat)
-
-			alert_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.00Z")
-			risk = home.within(geom)
-			severe_risk = False
-			risk_types = {
-				"TSTM" : "Thunderstorm",
-				"MRGL" : "Marginal",
-				"SLGT" : "Slight",
-				"ENH"  : "Enhanced",
-				"MDT"  : "Moderate",
-				"HIGH" : "High",
-				"None" : "None"
-			}
-			risk_type = "None"
-			for index, row in risk.items():
-				if row == True:
-					severe_risk = True
-					risk_type = labels[index]
-			risk_type = risk_types[risk_type]
-			if severe_risk:
-				print("[" + str(datetime.now()) + "] You are subject to a "+risk_type+" severe risk today.")
-				outlook_image = Image.open(requests.get("https://www.spc.noaa.gov/products/outlook/day1otlk.gif", stream=True).raw)
-				send_alert(alert_time, "Your area is subject to a " + risk_type + " severe risk today", spc_title, outlook_image, "https://www.spc.noaa.gov/products/outlook/day1otlk.gif")
+		examine_spc_risk(spc_url, spc_title)
 
 	warnings = request_alerts()
 	if warnings != None:
 		print("[" + str(datetime.now()) + "] NWS is reporting " + str(len(warnings)) + " alerts for your area")
 		for message in warnings:
-			if message["properties"]["@id"] in known_alerts:
-				print("We already know about alert ID: " + message["properties"]["@id"])
+			alert_id = message["properties"]["@id"]
+			if alert_id in known_alerts:
+				print("We already know about alert ID: " + alert_id)
 				continue
+			known_alerts.append(alert_id)
+			
+			message_type     = message["properties"]["messageType"]
+			issued_timestamp = message["properties"]["effective"]
+			ends             = str(message["properties"]["ends"])
+
+			headline, hazard, source, impact = parse_alert(message)
 			
 			print("------")
-			print(message["properties"]["@id"])
-			print(message["properties"]["headline"])
-			print("MessageType " + message["properties"]["messageType"])
-			print("Issued " + message["properties"]["effective"])
-			print("Ends " + str(message["properties"]["ends"]))
-			
-			known_alerts.append(message["properties"]["@id"])
-			
-			event = message["properties"]["event"]
-			description = message["properties"]["description"]
-			id = message["properties"]["@id"]
-
-			initial_description = ""
-			hazard_line = ""
-			source_line = ""
-			impact_line = ""
-			
-			if "HAZARD" in description:
-				initial_description = description[ : description.index("HAZARD")].replace("\n", " ").strip()
-				hazard_line = description[description.index("HAZARD") : description.index("SOURCE")].strip()
-				source_line = description[description.index("SOURCE") : description.index("IMPACT")].strip()
-				impact_line = description[description.index("IMPACT") : description.index("Locations impacted")].replace("\n", " ").strip()
-			elif "WHAT" in description: #doesn't totally align with variables, but will clean up later
-				initial_description = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
-				hazard_line = description[description.index("WHERE...") : description.index("WHEN...")].strip()
-				source_line = description[description.index("WHEN...") : description.index("IMPACTS...")].strip()
-				impact_line = description[description.index("IMPACTS...") : ].strip()
-			elif "Special Weather" in event or "Alert" in event:
-				initial_description = description
-
-			print("Initial: " + initial_description)
-			print("Hazard: " + hazard_line)
-			print("Source: " + source_line)
-			print("Impact: " + impact_line)
-			
-			warning_polygon = None
-			warning_image = None
-			if "geometry" in message and message["geometry"] is not None:
-				warning_polygon = message["geometry"]["coordinates"][0]
-				warning_image = generate_warning_image(warning_polygon)
-				#warning_image.show()
-			
+			print(alert_id)
+			print("Headline: "   + headline)
+			print("Hazard: "     + hazard)
+			print("Source: "     + source)
+			print("Impact: "     + impact)
+			print("MessageType " + message_type)
+			print("Issued "      + issued_timestamp)
+			print("Ends "        + ends)
 			print("------")
 			print()
-			body = "" + initial_description + "\n\n" + hazard_line + "\n" + source_line + "\n" + impact_line
-			send_alert(message["properties"]["effective"], message["properties"]["headline"], body, warning_image, id)
+			
+			warning_polygon = None
+			warning_image   = None
+			if "geometry" in message and message["geometry"] is not None:
+				warning_polygon = message["geometry"]["coordinates"][0]
+				warning_image   = generate_warning_image(warning_polygon)
+				#warning_image.show()
+			
+			message_body = "" + headline + "\n\n" + hazard + "\n" + source + "\n" + impact
+			alert_timestamp = time.mktime(datetime.strptime(issued_timestamp, "%Y-%m-%dT%H:%M:00-04:00").timetuple())
+			send_alert(alert_timestamp, headline, message_body, warning_image, alert_id)
 	else:
 		print("We were unable to successfully request information from the server")
 		break
