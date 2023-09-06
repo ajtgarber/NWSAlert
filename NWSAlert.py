@@ -11,6 +11,7 @@ from shapely.geometry import Point, Polygon
 from PIL import Image
 from PIL import ImageDraw
 import imageio.v2 as imageio
+import urllib
 
 from dotenv import load_dotenv
 from discord_webhook import DiscordWebhook, DiscordEmbed
@@ -41,31 +42,9 @@ def determine_spc_url():
     utcnow = datetime.utcnow()
     year = utcnow.year
     timestamp = ""
-    #Convective Outlook Issuance Times
-    #Day 1 Convective Outlook - 0600Z, 1300Z, 1630Z, 2000Z, and 0100Z
-    if utcnow.hour >= 20:
-        timestamp = utcnow.strftime("%Y%m%d_2000")
-    elif utcnow.hour > 16 or (utcnow.hour == 16 and utcnow.minute >= 30):
-        timestamp = utcnow.strftime("%Y%m%d_1630")
-    elif utcnow.hour >= 13:
-        timestamp = utcnow.strftime("%Y%m%d_1300")
-    elif utcnow.hour >= 6:
-        timestamp = utcnow.strftime("%Y%m%d_0600")
-    elif utcnow.hour >= 1:
-        timestamp = utcnow.strftime("%Y%m%d_0100")
-    elif utcnow.hour == 0:
-        utcnow = utcnow - timedelta(days=1)
-        timestamp = utcnow.strftime("%Y%m%d_2000")
-    spc_url = f"https://www.spc.noaa.gov/products/outlook/archive/{year}/day1otlk_{timestamp}_cat.lyr.geojson"
-    return spc_url
-
-def determine_spc_title():
-    utcnow = datetime.utcnow()
-    year = utcnow.year
-    timestamp = ""
-    #Convective Outlook Issuance Times
-    #Day 1 Convective Outlook - 0600Z, 1300Z, 1630Z, 2000Z, and 0100Z
     outlook_time = ""
+    #Convective Outlook Issuance Times
+    #Day 1 Convective Outlook - 0600Z, 1300Z, 1630Z, 2000Z, and 0100Z
     if utcnow.hour >= 20:
         outlook_time = "2000"
         timestamp = utcnow.strftime("%Y%m%d_2000")
@@ -82,23 +61,19 @@ def determine_spc_title():
         outlook_time = "0100"
         timestamp = utcnow.strftime("%Y%m%d_0100")
     elif utcnow.hour == 0:
-        utcnow = utcnow - timedelta(hours=2)
         outlook_time = "2000"
-
-    out_str = utcnow.strftime("%b %d, %Y")+" "+outlook_time+" UTC Day 1 Convective Outlook"
-    return out_str
+        utcnow = utcnow - timedelta(days=1)
+        timestamp = utcnow.strftime("%Y%m%d_2000")
+    spc_url = f"https://www.spc.noaa.gov/products/outlook/archive/{year}/day1otlk_{timestamp}_cat.lyr.geojson"
+    page_title = utcnow.strftime("%b %d, %Y")+" "+outlook_time+" UTC Day 1 Convective Outlook"
+    return (spc_url, page_title)
 
 def send_alert(timestamp, title, text, image, id):
 	content = "**" + title + "**\n" + text
-	#data = {
-	#	"content" : content,
-	#	"username" : "WXAlert"
-	#}
-	
 	time.sleep(1)
 	webhook = DiscordWebhook(WEBHOOK_URL, rate_limit_retry=True)
 	embed = DiscordEmbed(title=title, description=text, timestamp=timestamp)
-	#embed = DiscordEmbed(title=title, description=text)
+	
 	embed.set_footer(text=id)
 	if image is not None:
 		byte_array = io.BytesIO()
@@ -116,7 +91,7 @@ def request_alerts():
 	
 	for counter in range(0, 5):
 		try:
-			response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
+			#response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
 			#response = requests.get("https://api.weather.gov/alerts?point="+GPS_COORDS, headers=headers)
 		except requests.exceptions.RequestException as e:
 			print("Caught RequestException from server")
@@ -210,29 +185,48 @@ def generate_warning_image(warning_polygon):
 
 last_spc_url = ""
 while True:	
-	spc_url = determine_spc_url()
+	spc_url, spc_title = determine_spc_url()
 	if spc_url != last_spc_url:
 		last_spc_url = spc_url
 		print(spc_url)
-		day1_outlook = geopandas.read_file(spc_url)
-		geom = day1_outlook['geometry']
-		labels = day1_outlook['LABEL']
+		day1_outlook = None
+		try:
+			day1_outlook = geopandas.read_file(spc_url)
+		except urllib.error.HTTPError as e:
+			print("Received error while trying to retreieve outlook, we may have gotten here too early")
+			last_spc_url = ""
 
-		home_str = GPS_COORDS.split(",")
-		lat = home_str[0]
-		long = home_str[1]
-		home = Point(long, lat)
-		risk = home.within(geom)
-		severe_risk = False
-		risk_type = "None"
-		for index, row in risk.items():
-			if row == True:
-				severe_risk = True
-				risk_type = labels[index]
-		if severe_risk:
-			print("[" + str(datetime.now()) + "] You are subject to a "+risk_type+" severe risk today.")
-			outlook_image = Image.open(requests.get("https://www.spc.noaa.gov/products/outlook/day1otlk.gif", stream=True).raw)
-			send_alert(datetime.now().strftime("%Y-%m-%dT%H:%M:%S.00Z"), "Your area is subject to a " + risk_type + " severe risk today", determine_spc_title(), outlook_image, "https://www.spc.noaa.gov/products/outlook/day1otlk.gif")
+		if day1_outlook is not None:
+			geom = day1_outlook['geometry']
+			labels = day1_outlook['LABEL']
+
+			home_str = GPS_COORDS.split(",")
+			lat = home_str[0]
+			long = home_str[1]
+			home = Point(long, lat)
+
+			alert_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.00Z")
+			risk = home.within(geom)
+			severe_risk = False
+			risk_types = {
+				"TSTM" : "Thunderstorm",
+				"MRGL" : "Marginal",
+				"SLGT" : "Slight",
+				"ENH"  : "Enhanced",
+				"MDT"  : "Moderate",
+				"HIGH" : "High",
+				"None" : "None"
+			}
+			risk_type = "None"
+			for index, row in risk.items():
+				if row == True:
+					severe_risk = True
+					risk_type = labels[index]
+			risk_type = risk_types[risk_type]
+			if severe_risk:
+				print("[" + str(datetime.now()) + "] You are subject to a "+risk_type+" severe risk today.")
+				outlook_image = Image.open(requests.get("https://www.spc.noaa.gov/products/outlook/day1otlk.gif", stream=True).raw)
+				send_alert(alert_time, "Your area is subject to a " + risk_type + " severe risk today", spc_title, outlook_image, "https://www.spc.noaa.gov/products/outlook/day1otlk.gif")
 
 	warnings = request_alerts()
 	if warnings != None:
