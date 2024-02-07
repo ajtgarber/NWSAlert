@@ -12,6 +12,7 @@ from PIL import Image
 from PIL import ImageDraw
 import imageio.v2 as imageio
 import urllib
+from dateutil.parser import parse
 
 from dotenv import load_dotenv
 from discord_webhook import DiscordWebhook, DiscordEmbed
@@ -73,7 +74,7 @@ def send_alert(timestamp, title, text, image, id):
 	time.sleep(1)
 	webhook = DiscordWebhook(WEBHOOK_URL, rate_limit_retry=True)
 	embed = DiscordEmbed(title=title, description=text, timestamp=timestamp)
-	
+
 	embed.set_footer(text=id)
 	if image is not None:
 		byte_array = io.BytesIO()
@@ -91,8 +92,8 @@ def request_alerts():
 	
 	for counter in range(0, 5):
 		try:
-			#response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
-			response = requests.get("https://api.weather.gov/alerts?point="+GPS_COORDS, headers=headers)
+			response = requests.get("https://api.weather.gov/alerts/active?point="+GPS_COORDS, headers=headers)
+			#response = requests.get("https://api.weather.gov/alerts?point="+GPS_COORDS, headers=headers)
 		except requests.exceptions.RequestException as e:
 			print("Caught RequestException from server")
 			print(e)
@@ -190,7 +191,8 @@ def examine_spc_risk(spc_url, spc_title):
 	except urllib.error.HTTPError as e:
 		print("Received error while trying to retreieve outlook, we may have gotten here too early")
 		last_spc_url = ""
-
+	if day1_outlook is None:
+		print("day1_outlook is none")
 	if day1_outlook is not None:
 		geom  = day1_outlook['geometry']
 		labels = day1_outlook['LABEL']
@@ -200,7 +202,8 @@ def examine_spc_risk(spc_url, spc_title):
 		long     = home_str[1]
 		home     = Point(long, lat)
 
-		alert_time  = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.00Z")
+		#alert_time  = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.00Z")
+		alert_time = datetime.now()
 		risk        = home.within(geom)
 		severe_risk = False
 		risk_types = {
@@ -222,7 +225,9 @@ def examine_spc_risk(spc_url, spc_title):
 			print("[" + str(datetime.now()) + "] You are subject to a "+risk_type+" severe risk today.")
 			outlook_image = Image.open(requests.get("https://www.spc.noaa.gov/products/outlook/day1otlk.gif", stream=True).raw)
 			send_alert(alert_time, "Your area is subject to a " + risk_type + " severe risk today", spc_title, outlook_image, "https://www.spc.noaa.gov/products/outlook/day1otlk.gif")
-			
+		else:
+			print("Not subject to any SPC risk area")
+
 def parse_alert(message):
 	initial_description = ""
 	hazard_line = ""
@@ -238,12 +243,13 @@ def parse_alert(message):
 		source_line = description[description.index("SOURCE") : description.index("IMPACT")].strip()
 		impact_line = description[description.index("IMPACT") : description.index("Locations impacted")].replace("\n", " ").strip()
 	elif "WHAT" in description:
-		#initial_description = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
+		initial_description = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
 		hazard_line = description[description.index("WHERE...") : description.index("WHEN...")].strip()
 		source_line = description[description.index("WHEN...") : description.index("IMPACTS...")].strip()
 		impact_line = description[description.index("IMPACTS...") : ].strip()
-	elif "Special Weather" in event or "Alert" in event:
-		initial_description = description
+	elif "Special Weather" in initial_description or "Alert" in message:
+		print("Special Weather Statement")
+		hazard_line = description
 	return (initial_description, hazard_line, source_line, impact_line)
 
 last_spc_url = ""
@@ -290,7 +296,11 @@ while True:
 				#warning_image.show()
 			
 			message_body = "" + headline + "\n\n" + hazard + "\n" + source + "\n" + impact
-			alert_timestamp = time.mktime(datetime.strptime(issued_timestamp, "%Y-%m-%dT%H:%M:00-04:00").timetuple())
+			#issued_timestamp = issued_timestamp[ : -6 ]
+			#alert_timestamp = issued_timestamp
+			#print("'" + str(alert_timestamp) + "'")
+			alert_timestamp = parse(issued_timestamp)
+			#alert_timestamp = time.mktime(datetime.strptime(issued_timestamp, "%Y-%m-%dT%H:%M:00").timetuple())
 			send_alert(alert_timestamp, headline, message_body, warning_image, alert_id)
 	else:
 		print("We were unable to successfully request information from the server")
