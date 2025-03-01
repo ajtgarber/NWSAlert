@@ -3,7 +3,7 @@
 import json
 import requests
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 import os
 import io
 import geopandas
@@ -14,7 +14,7 @@ import imageio.v2 as imageio
 import urllib
 from dateutil.parser import parse
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from discord_webhook import DiscordWebhook, DiscordEmbed
 
 load_dotenv()
@@ -40,7 +40,8 @@ except requests.exceptions.RequestException as e:
 	print("Unable to determine radar site of specified coordinates, using default value")
 
 def determine_spc_url():
-    utcnow = datetime.utcnow()
+    #utcnow = datetime.utcnow()
+    utcnow = datetime.now(UTC)
     year = utcnow.year
     timestamp = ""
     outlook_time = ""
@@ -243,8 +244,8 @@ def parse_alert(message):
 		source_line = description[description.index("SOURCE") : description.index("IMPACT")].strip()
 		impact_line = description[description.index("IMPACT") : description.index("Locations impacted")].replace("\n", " ").strip()
 	elif "WHAT" in description:
-		initial_description = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
-		hazard_line = description[description.index("WHERE...") : description.index("WHEN...")].strip()
+		hazard_line = description[description.index("WHAT...") : description.index("WHERE...")].replace("\n", " ").strip()
+		hazard_line += description[description.index("WHERE...") : description.index("WHEN...")].strip()
 		source_line = description[description.index("WHEN...") : description.index("IMPACTS...")].strip()
 		impact_line = description[description.index("IMPACTS...") : ].strip()
 	elif "Special Weather" in initial_description or "Alert" in message:
